@@ -6,6 +6,7 @@ import os
 import joblib
 import numpy as np
 import pandas as pd
+import altair as alt
 import streamlit as st
 from sklearn.metrics import accuracy_score, f1_score, top_k_accuracy_score
 
@@ -16,6 +17,12 @@ DATA_PATH = os.path.join(BASE_DIR, 'dataset', 'fire_2020_2024.csv')
 MODEL_PATH = os.path.join(BASE_DIR, 'model', 'fire_cause_model.pkl')
 
 WEEKDAYS = ['월', '화', '수', '목', '금', '토', '일']
+
+# 원인별 색·아이콘 (노트북 그래프와 같은 색을 써서 화면 전체에서 원인을 같은 색으로 알아보게 함)
+CLASSES = ['부주의', '전기적 요인', '기계적 요인', '기타']
+COLORS = {'부주의': '#f58518', '전기적 요인': '#4c78a8', '기계적 요인': '#54a24b', '기타': '#9aa5b1'}
+ICONS = {'부주의': '🚬', '전기적 요인': '⚡', '기계적 요인': '⚙️', '기타': '❓'}
+COLOR_SCALE = alt.Scale(domain=CLASSES, range=[COLORS[c] for c in CLASSES])
 
 # 원인별 일반적인 예방 수칙 (소방청·한국전기안전공사 등에서 널리 안내하는 내용)
 TIPS = {
@@ -91,6 +98,8 @@ PRESETS = {
                                      place_1='주거', place_2='공동주택', place_3='아파트'),
     '🌾 4월 오후 2시 · 경북 논밭두렁': dict(month=4, hour=14, weekday=5, sido='경상북도', fire_type='임야',
                                        place_1='임야', place_2='들불', place_3='논밭두렁'),
+    '🏠 12월 밤 10시 · 강원 단독주택': dict(month=12, hour=22, weekday=5, sido='강원특별자치도', fire_type='건축,구조물',
+                                       place_1='주거', place_2='단독주택', place_3='단독주택'),
 }
 
 
@@ -100,18 +109,36 @@ def apply_preset(preset):
         st.session_state[k] = v
 
 
-# ---------------- 화면 구성 ----------------
-st.set_page_config(page_title='화재 원인 예측', layout='wide')
-st.title('전국 화재 데이터로 화재 원인 예측하기')
-# 마크다운에서 ~는 취소선 기호로 읽히므로 화면 문장 안에서는 \~로 씀
-st.caption('데이터: 소방청 화재발생 정보 (2020\\~2024년 실제 화재 191,510건) / 모델: 2020\\~2023년으로 학습, 2024년으로 평가')
+def bar_chart(df, x, y, color=None, height=180):
+    # 가로 막대 그래프: 원인 순서를 CLASSES로 고정하고, 막대 끝에 값을 표시
+    base = alt.Chart(df).encode(
+        # 막대 끝 숫자가 잘리지 않도록 가로축을 최댓값보다 20% 넓게 잡음
+        x=alt.X(f'{x}:Q', title=None, axis=None, scale=alt.Scale(domain=[0, df[x].max() * 1.2])),
+        y=alt.Y(f'{y}:N', title=None, sort=None, axis=alt.Axis(labelFontSize=14, labelLimit=260)),
+    )
+    bars = base.mark_bar(cornerRadiusEnd=4, height=26).encode(
+        color=alt.Color(f'{color}:N', scale=COLOR_SCALE, legend=None) if color else alt.value('#e45756'))
+    text = base.mark_text(align='left', dx=6, fontSize=14, fontWeight='bold').encode(text=f'{x}_label:N')
+    return (bars + text).properties(height=height)
 
-st.info(
-    '**화재 원인 조사는 시간이 걸립니다.** 하지만 언제·어디서 난 불인지만 알아도 원인을 어느 정도 좁힐 수 있습니다.\n\n'
-    '**이 앱은** 발생 시기(월·시간·요일), 지역, 장소, 화재 유형을 넣으면 **원인이 부주의·전기적 요인·기계적 요인·기타 중 '
-    '무엇일 가능성이 높은지** 알려주고, 그 원인에 맞는 예방 수칙을 보여줍니다.\n\n'
-    '**같은 장소라도 계절에 따라 원인이 달라집니다.** 여름에는 전기적 요인, 봄에는 부주의가 늘어납니다. 왼쪽에서 월을 바꿔 확인해 보세요.'
-)
+
+# ---------------- 화면 구성 ----------------
+st.set_page_config(page_title='화재 원인 예측', page_icon='🔥', layout='wide')
+
+# 결과 카드·사이드바 제목에 쓰는 간단한 스타일
+st.markdown('''
+<style>
+.result-card {border-radius: 12px; padding: 18px 22px; color: white; margin-bottom: 8px;}
+.result-card .label {font-size: 15px; opacity: 0.9;}
+.result-card .cause {font-size: 34px; font-weight: 800; line-height: 1.3;}
+.result-card .sub {font-size: 15px; opacity: 0.95;}
+.tip-card {border-left: 6px solid; border-radius: 8px; padding: 12px 16px; background: rgba(128,128,128,0.08);}
+</style>
+''', unsafe_allow_html=True)
+
+st.title('🔥 전국 화재 데이터로 화재 원인 예측하기')
+# 마크다운에서 ~는 취소선 기호로 읽히므로 화면 문장 안에서는 \~로 씀
+st.caption('데이터: 소방청 화재발생 정보 (2020\\~2024년 실제 화재 191,510건) · 모델: XGBoost (2020\\~2023년 학습, 2024년 평가)')
 
 for path in [DATA_PATH, MODEL_PATH]:
     if not os.path.exists(path):
@@ -126,57 +153,102 @@ for k, v in next(iter(PRESETS.values())).items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-# 모델 성능 (노트북 4-3과 같은 2024년 테스트 데이터)
-c1, c2, c3, c4 = st.columns(4)
-c1.metric('정확도', f"{scores['acc']:.1%}", help='원인을 정확히 맞힌 비율 (2024년 화재)')
-c2.metric('찍기 기준 정확도', f"{scores['baseline']:.1%}", help='비교 기준: 가장 많은 원인 하나만 답할 때의 정확도')
-c3.metric('상위 2개 적중률', f"{scores['top2']:.1%}", help='모델이 꼽은 원인 2개 안에 정답이 있는 비율')
-c4.metric('매크로 F1', f"{scores['f1']:.3f}", help='4개 원인을 똑같은 비중으로 평균한 F1 (0~1)')
-
 # 왼쪽 사이드바: 화재 상황 입력
-st.sidebar.header('대표 상황 고르기')
-for name, preset in PRESETS.items():
-    st.sidebar.button(name, on_click=apply_preset, args=(preset,), use_container_width=True)
+with st.sidebar:
+    st.header('🎯 대표 상황')
+    for name, preset in PRESETS.items():
+        st.button(name, on_click=apply_preset, args=(preset,), use_container_width=True)
 
-st.sidebar.header('직접 입력')
-inputs = {
-    'month': st.sidebar.slider('월', 1, 12, key='month'),
-    'hour': st.sidebar.slider('발생 시각 (시)', 0, 23, key='hour'),
-    'weekday': st.sidebar.selectbox('요일', range(7), format_func=lambda i: WEEKDAYS[i], key='weekday'),
-    'sido': st.sidebar.selectbox('시도', bundle['categories']['sido'], key='sido'),
-    'fire_type': st.sidebar.selectbox('화재 유형', bundle['categories']['fire_type'], key='fire_type'),
-}
-# 장소 목록은 실제 데이터에서 앞에서 고른 화재 유형·대분류·중분류와 함께 나온 것만 보여줌
-places = data[data['fire_type'] == inputs['fire_type']]
-inputs['place_1'] = st.sidebar.selectbox('장소 대분류', sorted(places['place_1'].unique()), key='place_1')
-places = places[places['place_1'] == inputs['place_1']]
-inputs['place_2'] = st.sidebar.selectbox('장소 중분류', sorted(places['place_2'].unique()), key='place_2')
-places = places[places['place_2'] == inputs['place_2']]
-inputs['place_3'] = st.sidebar.selectbox('장소 소분류', places['place_3'].value_counts().index.tolist(), key='place_3')
+    st.header('🕒 언제')
+    inputs = {
+        'month': st.slider('월', 1, 12, key='month'),
+        'hour': st.slider('발생 시각 (시)', 0, 23, key='hour'),
+        'weekday': st.selectbox('요일', range(7), format_func=lambda i: WEEKDAYS[i] + '요일', key='weekday'),
+    }
 
-# 1) 예측한 원인 확률
-proba = predict(bundle, inputs)
+    st.header('📍 어디서')
+    inputs['sido'] = st.selectbox('시도', bundle['categories']['sido'], key='sido')
+    inputs['fire_type'] = st.selectbox('화재 유형', bundle['categories']['fire_type'], key='fire_type')
+    # 장소 목록은 실제 데이터에서 앞에서 고른 화재 유형·대분류·중분류와 함께 나온 것만 보여줌
+    places = data[data['fire_type'] == inputs['fire_type']]
+    inputs['place_1'] = st.selectbox('장소 대분류', sorted(places['place_1'].unique()), key='place_1')
+    places = places[places['place_1'] == inputs['place_1']]
+    inputs['place_2'] = st.selectbox('장소 중분류', sorted(places['place_2'].unique()), key='place_2')
+    places = places[places['place_2'] == inputs['place_2']]
+    inputs['place_3'] = st.selectbox('장소 소분류', places['place_3'].value_counts().index.tolist(), key='place_3')
+    st.caption('일반 가정은 화재 유형 "건축,구조물" → 장소 "주거"에서 고르세요.')
+
+# 1) 예측 결과: 왼쪽 결과 카드 + 오른쪽 원인별 확률 막대
+proba = predict(bundle, inputs)[CLASSES]
 top = proba.idxmax()
-st.subheader(f'가장 가능성 높은 원인: {top} ({proba[top]:.0%})')
 second = proba.drop(top).idxmax()
-st.caption(f'두 번째 후보: {second} ({proba[second]:.0%}) — 상위 2개 안에 실제 원인이 있을 확률은 약 {scores["top2"]:.0%}입니다.')
-st.bar_chart(proba.rename('확률') * 100, horizontal=True, y_label='확률(%)', x_label='')
-st.success(f'**{top} 예방 수칙:** {TIPS[top]}')
+situation = (f"{inputs['month']}월 · {inputs['hour']}시 · {WEEKDAYS[inputs['weekday']]}요일 · {inputs['sido']} · "
+             f"{inputs['place_2']} > {inputs['place_3']}")
+st.markdown(f'##### 📝 {situation}')
 
-# 2) 이 장소의 실제 기록 (2020~2024년)
+left, right = st.columns([2, 3], gap='large')
+with left:
+    st.markdown(f'''
+<div class="result-card" style="background:{COLORS[top]}">
+  <div class="label">가장 가능성 높은 원인</div>
+  <div class="cause">{ICONS[top]} {top} {proba[top]:.0%}</div>
+  <div class="sub">두 번째 후보: {ICONS[second]} {second} {proba[second]:.0%}</div>
+</div>
+''', unsafe_allow_html=True)
+    st.markdown(f'<div class="tip-card" style="border-color:{COLORS[top]}"><b>{ICONS[top]} {top} 예방 수칙</b><br>{TIPS[top]}</div>',
+                unsafe_allow_html=True)
+with right:
+    st.markdown('**원인별 예측 확률**')
+    prob_df = pd.DataFrame({'원인': CLASSES, '확률': proba.values * 100})
+    prob_df['원인_표시'] = [f'{ICONS[c]} {c}' for c in CLASSES]
+    prob_df['확률_label'] = prob_df['확률'].map('{:.1f}%'.format)
+    st.altair_chart(bar_chart(prob_df.rename(columns={'원인_표시': '항목'}), '확률', '항목', color='원인'),
+                    use_container_width=True)
+    st.caption(f'상위 2개 후보 안에 실제 원인이 있을 확률은 약 {scores["top2"]:.0%}입니다 (2024년 화재 기준).')
+
+st.divider()
+
+# 2) 자세히 보기: 실제 기록 / 계절별 변화 / 모델 성능
 same_place = data[(data['place_3'] == inputs['place_3']) & (data['place_2'] == inputs['place_2'])]
-st.markdown(f'#### 실제 기록: {inputs["place_2"]} > {inputs["place_3"]} 화재 (2020\\~2024년 전국 {len(same_place):,}건)')
-k1, k2, k3 = st.columns(3)
-k1.metric('인명피해가 난 비율', f"{(same_place['casualties'] > 0).mean():.1%}")
-k2.metric('재산피해 중앙값', f"{same_place['damage'].median() / 10:,.0f}만원")
-k3.metric('원인 미상 비율', f"{(same_place['cause_group'] == '미상').mean():.1%}")
-detail = same_place.loc[same_place['cause_group'] != '미상', 'cause_detail'].value_counts().head(5)
-st.dataframe(pd.DataFrame({'세부 원인': detail.index, '건수': detail.values}), hide_index=True)
+tab1, tab2, tab3 = st.tabs(['📍 이 장소의 실제 기록', '📅 계절에 따른 변화', '📊 모델 성능'])
 
-# 3) 같은 장소·시간에서 월만 바꾸면 원인 확률이 어떻게 변하는지
-st.markdown('#### 같은 장소·시간이라도 계절에 따라 원인이 달라질까?')
-by_month = pd.DataFrame({m: predict(bundle, {**inputs, 'month': m}) * 100 for m in range(1, 13)}).T
-by_month.index.name = '월'
-st.line_chart(by_month, x_label='월', y_label='예측 확률(%)')
-st.caption('왼쪽에서 고른 조건에서 월만 1\\~12월로 바꿔 예측한 결과입니다.')
+with tab1:
+    st.markdown(f'**{inputs["place_2"]} > {inputs["place_3"]}** 화재 — 2020\\~2024년 전국 **{len(same_place):,}건**')
+    k1, k2, k3 = st.columns(3)
+    k1.metric('인명피해가 난 비율', f"{(same_place['casualties'] > 0).mean():.1%}")
+    k2.metric('재산피해 중앙값', f"{same_place['damage'].median() / 10:,.0f}만원")
+    k3.metric('원인 미상 비율', f"{(same_place['cause_group'] == '미상').mean():.1%}")
+    known_place = same_place[same_place['cause_group'] != '미상']
+    detail = (known_place.groupby(['cause_detail', 'cause_group']).size().sort_values(ascending=False)
+              .head(5).reset_index(name='건수'))
+    detail['건수_label'] = detail['건수'].map('{:,}건'.format)
+    st.markdown('**자주 나온 세부 원인 TOP 5** (색 = 원인 그룹)')
+    st.altair_chart(bar_chart(detail, '건수', 'cause_detail', color='cause_group', height=40 * len(detail) + 20),
+                    use_container_width=True)
+
+with tab2:
+    st.markdown('왼쪽에서 고른 조건은 그대로 두고 **월만 1\\~12월로 바꿔** 예측했습니다. 빨간 점선이 지금 고른 달입니다.')
+    by_month = pd.DataFrame([{'월': m, '원인': c, '확률': p * 100}
+                             for m in range(1, 13)
+                             for c, p in predict(bundle, {**inputs, 'month': m})[CLASSES].items()])
+    lines = alt.Chart(by_month).mark_line(point=True, strokeWidth=3).encode(
+        x=alt.X('월:O', axis=alt.Axis(labelAngle=0, labelExpr="datum.value + '월'")),
+        y=alt.Y('확률:Q', title='예측 확률(%)', scale=alt.Scale(domain=[0, 100])),
+        color=alt.Color('원인:N', scale=COLOR_SCALE, legend=alt.Legend(orient='top', title=None, labelFontSize=13)),
+        tooltip=['월', '원인', alt.Tooltip('확률:Q', format='.1f')],
+    )
+    now = alt.Chart(pd.DataFrame({'월': [inputs['month']]})).mark_rule(color='red', strokeDash=[6, 4]).encode(x='월:O')
+    st.altair_chart((lines + now).properties(height=340), use_container_width=True)
+
+with tab3:
+    st.markdown('2020\\~2023년 화재로 학습하고 **2024년 화재 34,561건**(원인 미상 제외)으로 평가한 결과입니다.')
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric('정확도', f"{scores['acc']:.1%}", f"{(scores['acc'] - scores['baseline']) * 100:+.1f}%p (찍기 대비)")
+    c2.metric('찍기 기준 정확도', f"{scores['baseline']:.1%}", help='가장 많은 원인(부주의) 하나만 답할 때의 정확도')
+    c3.metric('상위 2개 적중률', f"{scores['top2']:.1%}", help='모델이 꼽은 원인 2개 안에 정답이 있는 비율')
+    c4.metric('매크로 F1', f"{scores['f1']:.3f}", help='4개 원인을 똑같은 비중으로 평균한 F1 (0~1)')
+    st.info('장소·시간 정보만으로는 원인을 확정할 수 없어서, 이 앱은 **"우선 의심할 원인"을 알려주는 보조 도구**입니다. '
+            '건수가 적고 성격이 다양한 "기타"(방화·가스 등)는 특히 맞히기 어렵습니다.')
+
 st.caption('※ 과거 화재 기록에서 배운 경향으로 계산한 값이며, 실제 원인은 현장 조사로 확인해야 합니다.')
+
