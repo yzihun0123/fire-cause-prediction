@@ -33,6 +33,20 @@ TIPS = {
 }
 
 
+# 원인 그룹 설명 (처음 보는 사람도 알 수 있게 쉬운 말과 실제 사례로)
+DESCRIPTIONS = {
+    '부주의': ('사람의 실수나 방심으로 불이 난 경우입니다.',
+              '담배꽁초를 제대로 끄지 않고 버림 · 요리하다 자리를 비움 · 쓰레기나 논밭을 태우다 불이 번짐 · 용접 불티가 튐'),
+    '전기적 요인': ('전선·콘센트·전기제품에 이상이 생겨 불꽃이나 열이 난 경우입니다. 대부분 단락(합선)입니다.',
+                '낡은 전선 피복이 약해져 합선(절연열화) · 플러그에 쌓인 먼지와 습기로 불꽃(트래킹) · '
+                '멀티탭에 전기제품을 많이 꽂아 과부하'),
+    '기계적 요인': ('기계나 장비가 고장 나거나 지나치게 뜨거워져 불이 난 경우입니다.',
+                '자동차 엔진·보일러 과열 · 새어 나온 오일·연료가 뜨거운 부품에 닿음 · 오래되거나 정비가 안 된 기계'),
+    '기타': ('위 세 가지에 속하지 않는 여러 원인을 묶었습니다. 건수는 적지만 인명피해가 가장 잦은 그룹입니다.',
+            '방화·방화 의심 · 기름 걸레 등이 저절로 발화(자연발화) · 교통사고 · 가스 누출 폭발 · 낙뢰 같은 자연재해 · 제품 결함'),
+}
+
+
 def group_cause(c):
     # 노트북 2-1과 같은 원인 묶기
     return c if c in ['부주의', '전기적 요인', '기계적 요인', '미상'] else '기타'
@@ -195,6 +209,9 @@ with left:
   <div class="sub">두 번째 후보: {ICONS[second]} {second} {proba[second]:.0%}</div>
 </div>
 ''', unsafe_allow_html=True)
+    # 받침 유무에 따라 '란/이란'을 고름 (부주의란 / 전기적 요인이란)
+    josa = '이란' if (ord(top[-1]) - 0xAC00) % 28 else '란'
+    st.caption(f'**{top}{josa}?** ' + DESCRIPTIONS[top][0] + ' 자세한 설명은 아래 "📖 원인 종류 알아보기" 탭에 있습니다.')
     st.markdown(f'<div class="tip-card" style="border-color:{COLORS[top]}"><b>{ICONS[top]} {top} 예방 수칙</b><br>{TIPS[top]}</div>',
                 unsafe_allow_html=True)
 with right:
@@ -210,7 +227,31 @@ st.divider()
 
 # 2) 자세히 보기: 실제 기록 / 계절별 변화 / 모델 성능
 same_place = data[(data['place_3'] == inputs['place_3']) & (data['place_2'] == inputs['place_2'])]
-tab1, tab2, tab3 = st.tabs(['📍 이 장소의 실제 기록', '📅 계절에 따른 변화', '📊 모델 성능'])
+tab1, tab2, tab0, tab3 = st.tabs(['📍 이 장소의 실제 기록', '📅 계절에 따른 변화', '📖 원인 종류 알아보기', '📊 모델 성능'])
+
+with tab0:
+    st.markdown('소방청은 화재 원인을 12가지로 나누는데, 이 앱은 건수가 많은 3가지는 그대로 두고 나머지를 **기타**로 묶어 4가지로 예측합니다. '
+                '아래 숫자는 2020\\~2024년 전국 실제 화재 건수입니다.')
+    known_all = data[data['cause_group'] != '미상']
+    cols = st.columns(4)
+    for col, c in zip(cols, CLASSES):
+        part = known_all[known_all['cause_group'] == c]
+        # 기타는 여러 원인을 묶은 그룹이라 원래 원인(대분류)별로, 나머지는 세부 원인별로 건수를 보여줌
+        top_items = (part['cause'] if c == '기타' else part['cause_detail']).value_counts().head(6)
+        items = ''.join(f'<li>{name} <span style="opacity:0.6">({n:,}건)</span></li>' for name, n in top_items.items())
+        with col:
+            st.markdown(f'''
+<div class="result-card" style="background:{COLORS[c]}; padding:12px 16px">
+  <div class="cause" style="font-size:24px">{ICONS[c]} {c}</div>
+  <div class="sub">{len(part):,}건 · 원인을 아는 화재의 {len(part) / len(known_all):.0%}</div>
+</div>
+''', unsafe_allow_html=True)
+            st.markdown(DESCRIPTIONS[c][0])
+            st.markdown(f'**이런 경우예요:** {DESCRIPTIONS[c][1]}')
+            st.markdown(f'**{"포함된 원인" if c == "기타" else "자주 나온 세부 원인"}**<ul style="margin-top:4px">{items}</ul>',
+                        unsafe_allow_html=True)
+    st.caption('용어: 단락 = 합선 · 절연열화 = 전선 피복이 오래되어 약해짐 · 트래킹 = 플러그·콘센트에 쌓인 먼지와 습기로 전기가 새며 불꽃이 남 · '
+               '자연발화 = 기름 묻은 천 등이 스스로 열을 내다 불이 붙음')
 
 with tab1:
     st.markdown(f'**{inputs["place_2"]} > {inputs["place_3"]}** 화재 — 2020\\~2024년 전국 **{len(same_place):,}건**')
